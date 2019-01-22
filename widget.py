@@ -1,6 +1,7 @@
 from gi.repository import Gtk, GLib
 from gi.repository import AppIndicator3
 import os
+import math
 import random
 import configparser
 from configparser import NoSectionError, NoOptionError
@@ -44,7 +45,14 @@ class aStatusIcon:
             r = r.json()
 
             if 'activity' in r is not None:
-                name = r['activity'] + ' ' + str(r['delta'])
+                hours = math.floor(r['delta'])
+                minutes = math.floor((r['delta'] - hours) * 60)
+                if minutes < 10:
+                    minutes = '0' + str(minutes)
+                else:
+                    minutes = str(minutes)
+
+                name = r['activity'] + ' ' + str(hours) + ':' + minutes
                 ind_app.set_label(' ' + name, '')
             else:
                 ind_app.set_label(' нет задач', '')
