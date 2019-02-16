@@ -39,7 +39,11 @@ class aStatusIcon:
 
     def change_label(self, ind_app, host, token):
         headers = {'token': token}
-        r = requests.get(host + '/api/current', headers=headers)
+        try:
+            r = requests.get(host + '/api/current', headers=headers)
+        except:
+            ind_app.set_label(' ошибка подключения', '')
+            return True
 
         if r.status_code == 200:
             r = r.json()
