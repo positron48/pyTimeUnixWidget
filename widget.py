@@ -13,7 +13,10 @@ config = configparser.ConfigParser()
 config.read(cfg_file_path)
 
 class aStatusIcon:
-    def __init__(self):
+    def __init__(self, host, token):
+        self.host = host
+        self.token = token
+
         currpath = os.path.dirname(os.path.realpath(__file__))
 
         self.ind = AppIndicator3.Indicator.new("example-simple-client", currpath + "/timeIcon.png",
@@ -26,29 +29,51 @@ class aStatusIcon:
         # create a menu
         self.menu = Gtk.Menu()
 
-        item = Gtk.MenuItem("Quit")
+        item = Gtk.MenuItem("остановить")
+        item.show()
+        item.connect("activate", self.stop)
+        self.menu.append(item)
+
+        item = Gtk.MenuItem("выход")
         item.show()
         item.connect("activate", self.quit)
         self.menu.append(item)
+
         self.menu.show()
 
         self.ind.set_menu(self.menu)
 
+        self.task_id = None
+
     def quit(self, widget, data=None):
         Gtk.main_quit()
 
-    def change_label(self, ind_app, host, token):
-        headers = {'token': token}
+    def stop(self, widget, data=None):
+        if self.task_id is None:
+            return True
+
+        headers = {'token': self.token}
         try:
-            r = requests.get(host + '/api/current', headers=headers)
+            r = requests.post(self.host + '/api/task/stop', headers=headers, data={'id': self.task_id})
+            if r.status_code == 200:
+                self.task_id = None
+                self.change_label()
         except:
-            ind_app.set_label(' ошибка подключения', '')
+            return True
+
+    def change_label(self):
+        headers = {'token': self.token}
+        try:
+            r = requests.get(self.host + '/api/current', headers=headers)
+        except:
+            self.ind.set_label(' ошибка подключения', '')
             return True
 
         if r.status_code == 200:
             r = r.json()
 
             if 'activity' in r is not None:
+                self.task_id = r['id']
                 hours = math.floor(r['delta'])
                 minutes = math.floor((r['delta'] - hours) * 60)
                 if minutes < 10:
@@ -57,12 +82,11 @@ class aStatusIcon:
                     minutes = str(minutes)
 
                 name = r['activity'] + ' ' + str(hours) + ':' + minutes
-                ind_app.set_label(' ' + name, '')
+                self.ind.set_label(' ' + name, '')
             else:
-                ind_app.set_label(' нет задач', '')
-
+                self.ind.set_label(' нет задач', '')
         else:
-            ind_app.set_label(' ошибка подключения', '')
+            self.ind.set_label(' ошибка подключения', '')
 
         return True
 
@@ -86,9 +110,9 @@ if __name__ == "__main__":
     host = getValueFromConfig(config, 'host')
     token = getValueFromConfig(config, 'token')
 
-    indicator = aStatusIcon()
+    indicator = aStatusIcon(host, token)
 
-    indicator.change_label(indicator.ind, host, token)
-    GLib.timeout_add(5000, indicator.change_label, indicator.ind, host, token)
+    indicator.change_label()
+    GLib.timeout_add(5000, indicator.change_label)
 
     main()
