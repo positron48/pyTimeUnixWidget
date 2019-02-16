@@ -48,7 +48,7 @@ class aStatusIcon:
 
         currpath = os.path.dirname(os.path.realpath(__file__))
 
-        self.ind = AppIndicator3.Indicator.new("example-simple-client", currpath + "/timeIcon.png",
+        self.ind = AppIndicator3.Indicator.new("example-simple-client", currpath + "/time_icon.png",
                                                AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.ind.set_attention_icon("indicator-messages-new")
