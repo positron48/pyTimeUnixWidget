@@ -1,3 +1,5 @@
+
+# -*- coding: UTF-8 -*-
 from gi.repository import Gtk, GLib
 from gi.repository import AppIndicator3
 import os
@@ -11,6 +13,33 @@ import requests
 cfg_file_path = 'config.ini'
 config = configparser.ConfigParser()
 config.read(cfg_file_path)
+
+
+def get_user_text(parent, message, title=''):
+    # Returns user input as a string or None
+    # If user does not input text it returns None, NOT AN EMPTY STRING.
+    dialogWindow = Gtk.MessageDialog(None,
+                          Gtk.DialogFlags.MODAL | Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                          Gtk.MessageType.QUESTION,
+                          Gtk.ButtonsType.OK_CANCEL,
+                          message)
+
+    dialogWindow.set_title(title)
+
+    dialogBox = dialogWindow.get_content_area()
+    userEntry = Gtk.Entry()
+    userEntry.set_size_request(250,0)
+    dialogBox.pack_end(userEntry, False, False, 0)
+
+    dialogWindow.show_all()
+    response = dialogWindow.run()
+    text = userEntry.get_text()
+    dialogWindow.destroy()
+    if (response == Gtk.ResponseType.OK) and (text != ''):
+        return text
+    else:
+        return None
+
 
 class aStatusIcon:
     def __init__(self, host, token):
@@ -28,6 +57,11 @@ class aStatusIcon:
 
         # create a menu
         self.menu = Gtk.Menu()
+
+        item = Gtk.MenuItem("новая задача")
+        item.show()
+        item.connect("activate", self.start)
+        self.menu.append(item)
 
         item = Gtk.MenuItem("остановить")
         item.show()
@@ -60,6 +94,18 @@ class aStatusIcon:
                 self.change_label()
         except:
             return True
+
+    def start(self, widget, data=None):
+        taskText = get_user_text(self, "задача@проект #тег, комментарий", "Введите название задачи")
+        if taskText is not None and taskText != "":
+            headers = {'token': self.token}
+            try:
+                r = requests.post(self.host + '/api/task', headers=headers, data={'name': taskText})
+                if r.status_code == 200:
+                    self.change_label()
+            except:
+                return True
+
 
     def change_label(self):
         headers = {'token': self.token}
