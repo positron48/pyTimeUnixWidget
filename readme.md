@@ -2,12 +2,6 @@
 
 ## Установка
 
-### Системные зависимости
-```bash
-sudo apt update
-sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-appindicator3-0.1 python3-dev libgirepository1.0-dev pkg-config libcairo2-dev python3-venv
-```
-
 ### Настройка конфигурации
 ```bash
 cp config.ini.dist config.ini
