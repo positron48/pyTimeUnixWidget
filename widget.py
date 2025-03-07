@@ -1,5 +1,6 @@
-
 # -*- coding: UTF-8 -*-
+from retrying import retry
+import netifaces
 from gi.repository import Gtk, GLib
 from gi.repository import AppIndicator3
 import os
@@ -8,12 +9,15 @@ import random
 import configparser
 from configparser import NoSectionError, NoOptionError
 import requests
+import sys
 
 #read config
 cfg_file_path = 'config.ini'
 config = configparser.ConfigParser()
 config.read(cfg_file_path)
 
+# Get the absolute path to the script directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_user_text(parent, message, title=''):
     # Returns user input as a string or None
@@ -46,14 +50,25 @@ class aStatusIcon:
         self.host = host
         self.token = token
 
-        currpath = os.path.dirname(os.path.realpath(__file__))
-
-        self.ind = AppIndicator3.Indicator.new("example-simple-client", currpath + "/time_icon.png",
-                                               AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
+        # Use absolute path to the icon file
+        icon_path = os.path.join(SCRIPT_DIR, "time_icon.png")
+        
+        # Verify icon exists
+        if not os.path.exists(icon_path):
+            print(f"Error: Icon file not found at {icon_path}")
+            sys.exit(1)
+            
+        # Create indicator with absolute path
+        self.ind = AppIndicator3.Indicator.new(
+            "time-tracker-widget", 
+            icon_path,
+            AppIndicator3.IndicatorCategory.APPLICATION_STATUS
+        )
+        
+        # Ensure the indicator is set to active
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.ind.set_attention_icon("indicator-messages-new")
-        self.ind.set_label('', '')
-        # self.ind.set_icon("timeIcon.png")
+        self.ind.set_label('Загрузка...', '')
 
         # create a menu
         self.menu = Gtk.Menu()
@@ -106,36 +121,55 @@ class aStatusIcon:
             except:
                 return True
 
+    def is_network_connected(self):
+        # Check if any network interfaces are up
+        interfaces = netifaces.interfaces()
+        return any(netifaces.ifaddresses(interface).get(netifaces.AF_INET) for interface in interfaces)
+
+    @retry
+    def fetch_data(self):
+        if not self.is_network_connected():
+            raise Exception("Network is not connected")
+            
+        headers = {'token': self.token}
+        r = requests.get(self.host + '/api/current', headers=headers)
+        r.raise_for_status()
+        return r.json()
 
     def change_label(self):
-        headers = {'token': self.token}
         try:
-            r = requests.get(self.host + '/api/current', headers=headers)
-        except:
-            self.ind.set_label(' ошибка подключения', '')
-            return True
+            data = self.fetch_data()
 
-        if r.status_code == 200:
-            r = r.json()
-
-            if 'activity' in r is not None:
-                self.task_id = r['id']
-                hours = math.floor(r['delta'])
-                minutes = math.floor((r['delta'] - hours) * 60)
+            if 'activity' in data:
+                self.task_id = data['id']
+                hours = math.floor(data['delta'])
+                minutes = math.floor((data['delta'] - hours) * 60)
                 if minutes < 10:
                     minutes = '0' + str(minutes)
                 else:
                     minutes = str(minutes)
 
-                name = r['activity'] + ' ' + str(hours) + ':' + minutes
+                name = data['activity'] + ' ' + str(hours) + ':' + minutes
                 self.ind.set_label(' ' + name, '')
+                
+                # Force the indicator to redraw
+                self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
             else:
                 self.ind.set_label(' нет задач', '')
-        else:
+                # Force the indicator to redraw
+                self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        except requests.exceptions.RequestException as e:
+            # Handle network errors
             self.ind.set_label(' ошибка подключения', '')
+            # Force the indicator to redraw
+            self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        except Exception as e:
+            # Handle other exceptions
+            self.ind.set_label(' ошибка', '')
+            # Force the indicator to redraw
+            self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 
         return True
-
 
 def getValueFromConfig(config, name):
     try:
@@ -155,10 +189,21 @@ def main():
 if __name__ == "__main__":
     host = getValueFromConfig(config, 'host')
     token = getValueFromConfig(config, 'token')
+    
+    if not host or not token:
+        print("Error: Host or token not found in config.ini")
+        sys.exit(1)
 
-    indicator = aStatusIcon(host, token)
-
-    indicator.change_label()
-    GLib.timeout_add(5000, indicator.change_label)
-
-    main()
+    try:
+        indicator = aStatusIcon(host, token)
+        
+        # Initial label update
+        indicator.change_label()
+        
+        # Set up periodic updates
+        GLib.timeout_add(5000, indicator.change_label)
+        
+        main()
+    except Exception as e:
+        print(f"Error initializing application: {e}")
+        sys.exit(1)
