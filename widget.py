@@ -1,8 +1,17 @@
 # -*- coding: UTF-8 -*-
 from retrying import retry
 import netifaces
+import gi
+# Явно указываем версии GTK и индикатора, чтобы избежать конфликта GTK4/GTK3 на Ubuntu 24.04
+gi.require_version('Gtk', '3.0')
+# Пробуем классический AppIndicator3; если его нет, используем AyatanaAppIndicator3
+try:
+    gi.require_version('AppIndicator3', '0.1')
+    from gi.repository import AppIndicator3
+except (ValueError, ImportError):
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 from gi.repository import Gtk, GLib
-from gi.repository import AppIndicator3
 import os
 import math
 import time
@@ -54,6 +63,11 @@ class aStatusIcon:
         self.last_activity_time = time.time()
         self.last_data = None
         self.sleep_threshold = 60  # считаем сном, если не было активности более 60 секунд
+        self.consecutive_errors = 0
+        self.max_consecutive_errors = 3
+        self.last_successful_update = None
+        self.retry_interval = 5000  # начальный интервал повторных попыток в мс
+        self.max_retry_interval = 30000  # максимальный интервал повторных попыток в мс
 
         # Use absolute path to the icon file
         icon_path = os.path.join(SCRIPT_DIR, "time_icon.png")
@@ -98,8 +112,6 @@ class aStatusIcon:
         self.ind.set_menu(self.menu)
 
         self.task_id = None
-        self.consecutive_errors = 0
-        self.max_consecutive_errors = 3
 
     def quit(self, widget, data=None):
         Gtk.main_quit()
@@ -170,7 +182,7 @@ class aStatusIcon:
         # Перерисовываем индикатор
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         # Запрашиваем новые данные в отдельном потоке
-        threading.Thread(target=self._background_refresh).start()
+        threading.Thread(target=self._background_refresh, daemon=True).start()
     
     def _background_refresh(self):
         """Обновление в фоновом потоке"""
@@ -186,6 +198,11 @@ class aStatusIcon:
     def _update_label_with_data(self, data):
         """Обновляет метку с полученными данными"""
         self.last_data = data
+        self.last_successful_update = time.time()
+        
+        # Сбрасываем счетчики ошибок и интервал
+        self.consecutive_errors = 0
+        self.retry_interval = 5000
         
         if 'activity' in data:
             self.task_id = data['id']
@@ -201,28 +218,39 @@ class aStatusIcon:
         else:
             self.ind.set_label(' нет задач', '')
             
-        # Сбрасываем счетчик ошибок
-        self.consecutive_errors = 0
         # Перерисовываем
         self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-        return False  # для GLib.idle_add
+        return False
         
     def _update_label_with_error(self, error_message):
         """Обновляет метку с сообщением об ошибке"""
-        self.ind.set_label(' ошибка подключения', '')
-        # Перерисовываем
-        self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        current_time = time.time()
         
+        # Проверяем, не слишком ли долго нет успешных обновлений
+        if self.last_successful_update and (current_time - self.last_successful_update) > 300:  # 5 минут
+            self.ind.set_label(' переподключение...', '')
+            self.ind.set_status(AppIndicator3.IndicatorStatus.ATTENTION)
+            print("Длительное отсутствие успешных обновлений. Попытка переподключения...")
+            self.force_refresh()
+            return False
+
         # Увеличиваем счетчик ошибок
         self.consecutive_errors += 1
         print(f"Ошибка соединения ({self.consecutive_errors}/{self.max_consecutive_errors}): {error_message}")
         
-        # После нескольких ошибок подряд, меняем интервал обновления
+        # Определяем сообщение об ошибке в зависимости от количества попыток
         if self.consecutive_errors >= self.max_consecutive_errors:
-            print("Несколько ошибок подряд. Следующая попытка через 30 секунд.")
-            GLib.timeout_add(30000, self._retry_after_errors)
+            self.ind.set_label(' нет сети', '')
+            self.ind.set_status(AppIndicator3.IndicatorStatus.ATTENTION)
+            # Увеличиваем интервал повторных попыток
+            self.retry_interval = min(self.retry_interval * 2, self.max_retry_interval)
+            print(f"Увеличен интервал повторных попыток до {self.retry_interval/1000} секунд")
+            GLib.timeout_add(self.retry_interval, self._retry_after_errors)
+        else:
+            self.ind.set_label(' обновление...', '')
+            self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         
-        return False  # для GLib.idle_add
+        return False
     
     def _retry_after_errors(self):
         """Повторная попытка после серии ошибок"""
@@ -235,6 +263,13 @@ class aStatusIcon:
         # Проверяем, не был ли компьютер в режиме сна
         self.check_for_sleep_wake()
         
+        # Проверяем, не слишком ли долго нет успешных обновлений
+        current_time = time.time()
+        if self.last_successful_update and (current_time - self.last_successful_update) > 300:  # 5 минут
+            print("Длительное отсутствие успешных обновлений. Принудительное обновление...")
+            self.force_refresh()
+            return True
+        
         try:
             data = self.fetch_data()
             self._update_label_with_data(data)
@@ -245,10 +280,7 @@ class aStatusIcon:
             
         except Exception as e:
             # Handle other exceptions
-            self.ind.set_label(' ошибка', '')
-            # Force the indicator to redraw
-            self.ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-            print(f"Неизвестная ошибка: {e}")
+            self._update_label_with_error(str(e))
 
         return True
 

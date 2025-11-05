@@ -21,7 +21,8 @@ if command -v screen &> /dev/null; then
     
     # Запуск через screen
     echo "Запуск виджета в фоновом режиме через screen..."
-    screen -dmS timewidget bash -c "cd $SCRIPT_DIR && source venv/bin/activate && python widget.py"
+    # Включаем логирование вывода экрана в файл widget.log для диагностики падений
+    screen -L -Logfile "$SCRIPT_DIR/widget.log" -dmS timewidget bash -c "cd $SCRIPT_DIR && source venv/bin/activate && python widget.py"
     echo "Виджет запущен! Для просмотра логов выполните: screen -r timewidget"
     echo "Для отключения от сессии нажмите Ctrl+A, затем D"
     echo "Для остановки виджета выполните: screen -X -S timewidget quit"
